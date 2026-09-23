@@ -8,6 +8,7 @@ export const maxDuration = 60;
 
 // 批次回測：/api/backtest?symbols=2330,2317,2454&from=2023-01-01&to=2026-09-23
 // 回傳：days = 每個交易日的精簡資料（算統計用）；signals = A/B 日的完整欄位（下載CSV用）
+// days 格式：[代號, 日期, 等級, 是否新訊號, 0050環境, 7項條件字串, (mfe,mae,ret)×5]
 export async function GET(req) {
   const sp = new URL(req.url).searchParams;
   const symbols = (sp.get('symbols') || '').split(',').map(s => s.trim()).filter(s => /^\d{4,6}$/.test(s)).slice(0, 8);
@@ -29,7 +30,9 @@ export async function GET(req) {
       const name = CONSTITUENTS.find(c => c[0] === code)?.[1] || '';
       const rows = runSymbol({ symbol: code, name, bars, marketMap, from, to });
       for (const r of rows) {
-        days.push([r.symbol, r.signalDate, r.grade, r.isNewSignal ? 1 : 0, r.etf0050Env, ...HORIZONS.flatMap(N => [r[`mfe${N}`], r[`mae${N}`]])]);
+        const conds = [r.c1, r.c2, r.c3, r.c4, r.c5, r.c6, r.c7].map(c => (c === true ? '1' : c === false ? '0' : '-')).join('');
+        days.push([r.symbol, r.signalDate, r.grade, r.isNewSignal ? 1 : 0, r.etf0050Env, conds,
+          ...HORIZONS.flatMap(N => [r[`mfe${N}`], r[`mae${N}`], r[`ret${N}`]])]);
         if (r.grade !== '觀察') signals.push(r);
       }
     } catch (e) {
