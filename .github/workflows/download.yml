@@ -1,0 +1,57 @@
+name: 全市場資料下載
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 * * * *'   # 每小時自動執行一次（全部完成後會自動停用）
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: market-data
+  cancel-in-progress: false
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: 取回上次的進度
+        id: restore
+        run: |
+          if ! gh release view market-data > /dev/null 2>&1; then
+            gh release create market-data --title "全市場資料（自動維護）" --notes "由 GitHub Actions 自動下載與更新，請勿手動修改。" --target main
+          fi
+          if gh release view market-data --json assets -q '.assets[].name' | grep -qx 'market-data.tar.gz'; then
+            gh release download market-data --pattern 'market-data.tar.gz' --clobber
+            tar -xzf market-data.tar.gz
+            echo "已取回上次進度"
+          else
+            echo "第一次執行，從頭開始"
+          fi
+
+      - name: 下載資料
+        run: node scripts/download.mjs
+        env:
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+
+      - name: 儲存進度
+        if: always() && steps.restore.outcome == 'success' && hashFiles('data/status.json') != ''
+        run: |
+          tar -czf market-data.tar.gz data
+          gh release upload market-data market-data.tar.gz --clobber
+          ls -lh market-data.tar.gz
+
+      - name: 全部完成後停止每小時排程
+        if: success() && hashFiles('data/COMPLETE') != ''
+        run: gh workflow disable download.yml
