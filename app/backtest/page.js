@@ -11,6 +11,7 @@ const GROUPS = ['全部訊號', 'A級', 'B級', '基準：所有交易日'];
 const BATCH = 5;
 const f = v => (v == null ? '—' : v);
 const today = () => new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10);
+const liteText = s => `n=${s.n} r20 ${f(s.r20)} r60 ${f(s.r60)}(中位${f(s.med60)}) 勝${f(s.win60)}% +10:${f(s.up10)}% -8:${f(s.dn8)}%`;
 
 function Table({ head, rows }) {
   return (
@@ -27,6 +28,16 @@ function Table({ head, rows }) {
   );
 }
 
+function Tabs({ value, onChange, options }) {
+  return (
+    <div style={{ display: 'flex', gap: 6, margin: '6px 0' }}>
+      {options.map(o => (
+        <button key={o} onClick={() => onChange(o)} style={{ ...pill, padding: '4px 10px', fontSize: 12, background: value === o ? '#3b82f6' : '#232733' }}>{o}</button>
+      ))}
+    </div>
+  );
+}
+
 export default function Backtest() {
   const [from, setFrom] = useState('2023-01-01');
   const [to, setTo] = useState(today());
@@ -38,6 +49,8 @@ export default function Backtest() {
   const [signals, setSignals] = useState([]);
   const [errors, setErrors] = useState([]);
   const [copied, setCopied] = useState(false);
+  const [envB, setEnvB] = useState('全部');
+  const [envC, setEnvC] = useState('全部');
 
   async function run() {
     setRunning(true); setDays(null); setSignals([]); setErrors([]); setCheck(null);
@@ -54,8 +67,8 @@ export default function Backtest() {
         const j = await (await fetch(`/api/backtest?symbols=${part.join(',')}&from=${from}&to=${to}`)).json();
         if (j.error) throw new Error(j.error);
         for (const d of j.days) {
-          const o = { symbol: d[0], date: d[1], grade: d[2], isNewSignal: d[3] === 1, etf0050Env: d[4] };
-          HORIZONS.forEach((N, k) => { o[`mfe${N}`] = d[5 + k * 2]; o[`mae${N}`] = d[6 + k * 2]; });
+          const o = { symbol: d[0], date: d[1], grade: d[2], isNewSignal: d[3] === 1, etf0050Env: d[4], conds: d[5] };
+          HORIZONS.forEach((N, k) => { o[`mfe${N}`] = d[6 + k * 3]; o[`mae${N}`] = d[7 + k * 3]; o[`ret${N}`] = d[8 + k * 3]; });
           allDays.push(o);
         }
         allSig.push(...j.signals);
@@ -99,9 +112,23 @@ export default function Backtest() {
     for (const env of ['多方', '震盪', '空方']) {
       for (const g of GROUPS) {
         const s = report.byEnv[env][g];
-        L.push(`  ${env}｜${g}：n=${s.count}，20日 +${f(s.avgMfe[20])}/${f(s.avgMae[20])}，60日 +${f(s.avgMfe[60])}/${f(s.avgMae[60])}，60日達+10%:${f(s.up[60][10])}%，60日跌破-8%:${f(s.down[60][8])}%`);
+        L.push(`  ${env}｜${g}：n=${s.count}，20日 +${f(s.avgMfe[20])}/${f(s.avgMae[20])}，60日 +${f(s.avgMfe[60])}/${f(s.avgMae[60])}，60日收盤報酬 ${f(s.avgRet[60])}（勝${f(s.win[60])}%），60日達+10%:${f(s.up[60][10])}%，60日跌破-8%:${f(s.down[60][8])}%`);
       }
     }
+    L.push(`⑨ N日後收盤報酬(%)：平均 / 中位數 / 勝率(報酬>0)`);
+    for (const g of GROUPS) L.push(`  ${g}：` + HORIZONS.map(N => `${N}日 ${f(G[g].avgRet[N])}/${f(G[g].medRet[N])}/${f(G[g].win[N])}%`).join('，'));
+    L.push(`⑩a 單一條件（所有交易日）成立｜不成立：`);
+    for (const c of report.condAll) L.push(`  ${c.name} 成立 ${liteText(c.yes)}｜不成立 ${liteText(c.no)}`);
+    for (const env of ['全部', '多方', '震盪']) {
+      L.push(`⑩b 訊號中各條件（${env}）成立｜不成立：`);
+      for (const c of report.condInSig[env]) L.push(`  ${c.name} 成立 ${liteText(c.yes)}｜不成立 ${liteText(c.no)}`);
+    }
+    for (const env of ['全部', '多方', '震盪']) {
+      L.push(`⑩c A級依缺少條件分組（${env}）：`);
+      for (const b of report.aMissing[env]) if (b.n) L.push(`  ${b.name} ${liteText(b)}`);
+    }
+    L.push(`⑪ 分年度：`);
+    for (const y of report.byYear) for (const g of GROUPS) L.push(`  ${y.year}｜${g}：${liteText(y.groups[g])}`);
     return L.join('\n');
   }
 
@@ -110,6 +137,11 @@ export default function Backtest() {
   }
 
   const G = report?.byGroup;
+  const condHead = ['條件', '成立n', '成立60日報酬', '成立勝率', '成立-8%', '不成立n', '不成立60日報酬', '不成立勝率', '不成立-8%'];
+  const condRow = c => [c.name, c.yes.n, f(c.yes.r60), f(c.yes.win60), f(c.yes.dn8), c.no.n, f(c.no.r60), f(c.no.win60), f(c.no.dn8)];
+  const liteHead = ['', 'n', '20日報酬', '60日報酬', '60日中位', '60日勝率', '達+10%', '跌-8%'];
+  const liteRow = (name, s) => [name, s.n, f(s.r20), f(s.r60), f(s.med60), f(s.win60), f(s.up10), f(s.dn8)];
+
   return (
     <main style={{ maxWidth: 720, margin: '0 auto', padding: 12 }}>
       <h2 style={{ margin: '8px 0' }}>第一版基準回測 <small style={{ color: '#888', fontSize: 13 }}>0050 全部成份股</small></h2>
@@ -182,17 +214,59 @@ export default function Backtest() {
             {['多方', '震盪', '空方'].map(env => (
               <div key={env} style={{ marginTop: 8 }}>
                 <b style={{ color: env === '多方' ? '#e5484d' : env === '空方' ? '#30a46c' : '#f5a524' }}>0050 {env}</b>
-                <Table head={['', '數量', '20日MFE', '20日MAE', '60日MFE', '60日MAE', '60日達+10%', '60日跌-8%']}
+                <Table head={['', '數量', '20日MFE', '20日MAE', '60日MFE', '60日MAE', '60日報酬', '60日勝率', '60日達+10%', '60日跌-8%']}
                   rows={GROUPS.map(g => {
                     const s = report.byEnv[env][g];
-                    return [g, s.count, f(s.avgMfe[20]), f(s.avgMae[20]), f(s.avgMfe[60]), f(s.avgMae[60]), f(s.up[60][10]), f(s.down[60][8])];
+                    return [g, s.count, f(s.avgMfe[20]), f(s.avgMae[20]), f(s.avgMfe[60]), f(s.avgMae[60]), f(s.avgRet[60]), f(s.win[60]), f(s.up[60][10]), f(s.down[60][8])];
                   })} />
               </div>
             ))}
           </div>
 
+          <div style={box}>
+            <b>⑨ N 日後收盤報酬（%）</b>
+            <div style={{ fontSize: 11, color: '#888' }}>訊號日收盤買進、第 N 個交易日收盤的報酬（不是期間最高點）</div>
+            <div style={{ fontSize: 12, marginTop: 6 }}>平均</div>
+            <Table head={['', ...HORIZONS.map(N => `${N}日`)]} rows={GROUPS.map(g => [g, ...HORIZONS.map(N => f(G[g].avgRet[N]))])} />
+            <div style={{ fontSize: 12, marginTop: 6 }}>中位數</div>
+            <Table head={['', ...HORIZONS.map(N => `${N}日`)]} rows={GROUPS.map(g => [g, ...HORIZONS.map(N => f(G[g].medRet[N]))])} />
+            <div style={{ fontSize: 12, marginTop: 6 }}>勝率（報酬 &gt; 0 的比例）</div>
+            <Table head={['', ...HORIZONS.map(N => `${N}日`)]} rows={GROUPS.map(g => [g, ...HORIZONS.map(N => f(G[g].win[N]))])} />
+          </div>
+
+          <div style={box}>
+            <b>⑩a 單一條件分析（所有交易日）</b>
+            <div style={{ fontSize: 11, color: '#888' }}>每項條件單獨看：成立的日子 vs 不成立的日子，60 日表現</div>
+            <Table head={condHead} rows={report.condAll.map(condRow)} />
+          </div>
+
+          <div style={box}>
+            <b>⑩b 訊號中各條件的貢獻</b>
+            <div style={{ fontSize: 11, color: '#888' }}>只看 A/B 訊號：該條件成立 vs 不成立</div>
+            <Tabs value={envB} onChange={setEnvB} options={['全部', '多方', '震盪']} />
+            <Table head={condHead} rows={report.condInSig[envB].map(condRow)} />
+          </div>
+
+          <div style={box}>
+            <b>⑩c A 級依「缺少哪一項」分組</b>
+            <div style={{ fontSize: 11, color: '#888' }}>A 級 = 7 項至少符合 6 項，所以最多缺 1 項</div>
+            <Tabs value={envC} onChange={setEnvC} options={['全部', '多方', '震盪']} />
+            <Table head={liteHead} rows={report.aMissing[envC].filter(b => b.n).map(b => liteRow(b.name, b))} />
+          </div>
+
+          <div style={box}>
+            <b>⑪ 分年度</b>
+            {report.byYear.map(y => (
+              <div key={y.year} style={{ marginTop: 8 }}>
+                <b>{y.year}</b>
+                <Table head={liteHead} rows={GROUPS.map(g => liteRow(g, y.groups[g]))} />
+              </div>
+            ))}
+            <div style={{ fontSize: 11, color: '#888', marginTop: 6 }}>最後一年只到今天，且最近 60 個交易日沒有 60 日報酬</div>
+          </div>
+
           <p style={{ fontSize: 11, color: '#666' }}>
-            MFE/MAE 以訊號日收盤價為基準、使用還原權息價（含股利）。最後 5～60 個交易日的訊號因未來資料不足，對應期間不列入統計。
+            MFE/MAE/收盤報酬 以訊號日收盤價為基準、使用還原權息價（含股利）。最後 5～60 個交易日的訊號因未來資料不足，對應期間不列入統計。
             「基準：所有交易日」= 同一批股票在同期間的每一天，用來對照訊號是否真的比隨便哪天好。
           </p>
         </>
