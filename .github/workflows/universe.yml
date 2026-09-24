@@ -1,0 +1,38 @@
+name: Phase2a 權值股名單
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: market-data
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: 取回已下載的資料
+        run: |
+          gh release download market-data --pattern 'market-data.tar.gz' --clobber
+          tar -xzf market-data.tar.gz
+
+      - name: 建立權值股名單
+        run: node --max-old-space-size=6144 scripts/build-universe.mjs
+
+      - name: 儲存名單
+        run: |
+          tar -czf market-data.tar.gz data
+          gh release upload market-data market-data.tar.gz --clobber
+          ls -lh market-data.tar.gz
