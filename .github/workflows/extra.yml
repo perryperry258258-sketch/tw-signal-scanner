@@ -1,0 +1,48 @@
+name: Phase2b 補抓資料
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '41 * * * *'   # 每小時自動執行一次（全部完成後會自動停用）
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: market-data
+  cancel-in-progress: false
+
+jobs:
+  extra:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: 取回資料
+        id: restore
+        run: |
+          gh release download market-data --pattern 'market-data.tar.gz' --clobber
+          tar -xzf market-data.tar.gz
+
+      - name: 補抓資料
+        run: node scripts/download-extra.mjs
+        env:
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+
+      - name: 儲存進度
+        if: always() && steps.restore.outcome == 'success'
+        run: |
+          tar -czf market-data.tar.gz data
+          gh release upload market-data market-data.tar.gz --clobber
+
+      - name: 全部完成後停止每小時排程
+        if: success() && hashFiles('data/EXTRA_COMPLETE') != ''
+        run: gh workflow disable extra.yml
