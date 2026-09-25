@@ -1,0 +1,37 @@
+name: Phase2d 跳空分類
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: market-data
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: 取回資料
+        run: |
+          gh release download market-data --pattern 'market-data.tar.gz' --clobber
+          tar -xzf market-data.tar.gz
+
+      - name: 分類跳空
+        run: node --max-old-space-size=6144 scripts/check-gaps.mjs
+
+      - name: 儲存
+        run: |
+          tar -czf market-data.tar.gz data
+          gh release upload market-data market-data.tar.gz --clobber
