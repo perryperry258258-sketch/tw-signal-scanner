@@ -1,0 +1,52 @@
+name: 每週全市場更新
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 * * * 6,0'   # 週六、週日每小時執行，完成後當週不再動作
+
+permissions:
+  contents: write
+
+concurrency:
+  group: market-data
+  cancel-in-progress: false
+
+jobs:
+  weekly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: 取回資料
+        id: restore
+        run: |
+          gh release download market-data --pattern 'market-data.tar.gz' --clobber
+          tar -xzf market-data.tar.gz
+
+      - name: 全市場增量更新
+        id: update
+        run: node scripts/update.mjs
+        env:
+          MODE: weekly
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+
+      - name: 本週更新完成後重建名單與候選池
+        if: steps.update.outputs.weeklyjustdone == 'true'
+        run: |
+          node --max-old-space-size=6144 scripts/build-universe.mjs
+          node --max-old-space-size=6144 scripts/build-adjusted.mjs > /dev/null
+          node --max-old-space-size=6144 scripts/check-gaps.mjs > /dev/null
+
+      - name: 儲存資料
+        if: always() && steps.restore.outcome == 'success'
+        run: |
+          tar -czf market-data.tar.gz data
+          gh release upload market-data market-data.tar.gz --clobber
