@@ -129,6 +129,17 @@ writeFileSync(`${DIR}/meta/universe.json`, JSON.stringify({
   balField, calendar: [cal[0], cal[D - 1]], stocks: universe,
 }));
 
+// ---------- 候選池（每日更新用）----------
+// 取「多數股票都有資料」的最近一天：市值前 300 或 20日均成交值前 400，
+// 再加上最近 250 個交易日內曾入選權值股的股票
+let fullIdx = D - 1;
+while (fullIdx > 0 && S.filter(s => s.m20[fullIdx] > 0).length < 1000) fullIdx--;
+const mR = S.map((s, j) => [j, s.mcap[fullIdx]]).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).slice(0, 300).map(([j]) => S[j].id);
+const tR = S.map((s, j) => [j, s.m20[fullIdx]]).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).slice(0, 400).map(([j]) => S[j].id);
+const recentU = Object.entries(universe).filter(([, u]) => u.segs.at(-1)[1] >= cal[Math.max(0, D - 250)]).map(([id]) => id);
+const pool = [...new Set([...mR, ...tR, ...recentU])].sort();
+writeFileSync(`${DIR}/meta/pool.json`, JSON.stringify({ basedOn: cal[fullIdx], count: pool.length, ids: pool }));
+
 // ---------- 報告 ----------
 const md = ['# 權值股名單與資料品質', ''];
 const uIds = Object.keys(universe);
@@ -143,7 +154,8 @@ md.push('## 名單概況', '', '| 項目 | 數值 |', '|---|---|',
   `| 使用季報股本的 | ${uIds.filter(id => universe[id].shSource === 'balance').length} 檔 |`,
   `| 使用成交值替代規則的 | ${uIds.filter(id => universe[id].shSource === 'none').length} 檔 |`,
   `| 與上一版相比新增 | ${added.length} 檔${added.length ? '：' + added.slice(0, 60).map(id => `${id}${universe[id].name}`).join('、') : ''} |`,
-  `| 與上一版相比移除 | ${removed.length} 檔${removed.length ? '：' + removed.slice(0, 30).join('、') : ''} |`);
+  `| 與上一版相比移除 | ${removed.length} 檔${removed.length ? '：' + removed.slice(0, 30).join('、') : ''} |`,
+  `| 每日更新候選池 | ${pool.length} 檔（依據 ${cal[fullIdx]}） |`);
 
 if (balCalib.length) {
   md.push('', '## 季報股本校正（股本÷10 ÷ 實際發行股數）', '', '| 欄位 | 中位數 | 誤差5%內比例 | 樣本 |', '|---|---|---|---|',
