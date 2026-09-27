@@ -147,4 +147,82 @@ function portfolio(evs, from, to) {
     mdd = Math.min(mdd, equity / peak - 1);
   }
   const years = days.length / 250;
-  return { cagr: r1(Math.pow(equity, 1 / years) - 1)
+  return { cagr: r1(Math.pow(equity, 1 / years) - 1), mdd: r1(mdd), total: r1(equity - 1), taken, exposure: r1(exposure / days.length) };
+}
+function bench(from, to) {
+  const s = taiex.filter(b => b.date >= from && b.date <= to);
+  let peak = 0, mdd = 0;
+  for (const b of s) { peak = Math.max(peak, b.close); mdd = Math.min(mdd, b.close / peak - 1); }
+  const years = s.length / 250;
+  return { cagr: r1(Math.pow(s.at(-1).close / s[0].close, 1 / years) - 1), mdd: r1(mdd), total: r1(s.at(-1).close / s[0].close - 1) };
+}
+
+// ---------- 樣本內：全部變化版 ----------
+const res = {};
+for (const [fam, key, desc] of VARIANTS) {
+  const isEv = events[key].filter(e => e.period === 'IS');
+  res[key] = { fam, key, desc, t: tradeStats(isEv), p: portfolio(isEv, IS_FROM, IS_TO) };
+}
+const bIS = bench(IS_FROM, IS_TO);
+
+say('# Phase 4：三類訊號比較（找報酬最高的方法）', '',
+  '## ① 共同規則', '',
+  '- 訊號隔天開盤進場；停損 = 整理區間低點（最多 -15%）；最長持有 250 個交易日；報酬已扣成本 0.6%',
+  `- 同一檔、同一種訊號，${COOLDOWN} 個交易日內只算第一次`,
+  `- 組合：${SLOTS} 格資金，每筆投入當時總資產的 1/${SLOTS}，格子滿了就放棄；同日多個訊號，突破日量能大的優先`,
+  `- 挑選規則（事先寫死）：每類中樣本內事件 ≥ ${MIN_EVENTS} 筆的版本，選「樣本內組合年化報酬」最高者`,
+  `- 隔天開盤漲停買不到：${unfilled} 次（已排除）`, '');
+
+say('## ② 樣本內（2005～2016）全部版本', '',
+  '| 版本 | 事件 | 訊號週數 | 翻倍率 | 先停損 | 勝率 | 平均報酬 | 中位報酬 | 獲利因子 | 組合年化 | 最大回檔 | 平均持倉 |',
+  '|---|---|---|---|---|---|---|---|---|---|---|---|');
+for (const r of Object.values(res)) {
+  const t = r.t, p = r.p;
+  say(`| ${r.key} | ${t.n} | ${t.weeks ?? 0} | ${t.p100 ?? '—'}% | ${t.stop ?? '—'}% | ${t.win ?? '—'}% | ${t.avg ?? '—'}% | ${t.med ?? '—'}% | ${t.pf ?? '—'} | ${p.cagr}% | ${p.mdd}% | ${p.exposure}% |`);
+}
+say(`| 加權指數（買進持有，不含股利） | — | — | — | — | — | — | — | — | ${bIS.cagr}% | ${bIS.mdd}% | 100% |`, '');
+say('各版本定義：', '', ...VARIANTS.map(v => `- **${v[1]}**：${v[2]}`), '');
+
+// ---------- 挑選 ----------
+const picks = ['A', 'B', 'C'].map(fam => {
+  const cands = Object.values(res).filter(r => r.fam === fam && r.t.n >= MIN_EVENTS);
+  cands.sort((a, b) => b.p.cagr - a.p.cagr);
+  return cands[0] ? cands[0].key : null;
+}).filter(Boolean);
+say('## ③ 依規則選出的各類代表', '', ...(picks.length ? picks.map(k => `- **${k}**：${res[k].desc}（樣本內組合年化 ${res[k].p.cagr}%）`) : ['- 沒有任何版本達到事件數門檻']), '');
+
+// ---------- 分年度（樣本內） ----------
+say('## ④ 選出版本的分年度表現（樣本內）', '');
+for (const k of [...picks, 'O1']) {
+  const isEv = events[k].filter(e => e.period === 'IS' && !e.censored);
+  const years = [...new Set(isEv.map(e => e.date.slice(0, 4)))].sort();
+  say(`**${k}**`, '', '| 年度 | 事件 | 翻倍率 | 平均報酬 | 勝率 |', '|---|---|---|---|---|');
+  for (const y of years) {
+    const s = tradeStats(isEv.filter(e => e.date.startsWith(y)));
+    say(`| ${y} | ${s.n} | ${s.p100}% | ${s.avg}% | ${s.win}% |`);
+  }
+  const pos = years.filter(y => tradeStats(isEv.filter(e => e.date.startsWith(y))).avg > 0).length;
+  say('', `平均報酬為正的年份：${pos} / ${years.length}`, '');
+  const top = [...isEv].sort((a, b) => b.ret - a.ret).slice(0, 5);
+  say('報酬最高的 5 筆：' + top.map(e => `${e.id}${universe[e.id].name}(${e.date}, ${r1(e.ret)}%)`).join('、'), '');
+}
+
+// ---------- 樣本外：只驗證選出的版本 ----------
+const bOOS = bench(OOS_FROM, calEnd);
+say(`## ⑤ 樣本外一次性驗證（${OOS_FROM}～${calEnd}）`, '',
+  '只打開被選中的版本與對照組。**這是唯一一次查看樣本外**；之後若依這些數字修改規則，樣本外就不再是乾淨的驗證。', '',
+  '| 版本 | 事件 | 翻倍率 | 先停損 | 勝率 | 平均報酬 | 中位報酬 | 組合年化 | 最大回檔 | 樣本內年化（對照） |',
+  '|---|---|---|---|---|---|---|---|---|---|');
+for (const k of [...picks, 'O1']) {
+  const oo = events[k].filter(e => e.period === 'OOS');
+  const t = tradeStats(oo), p = portfolio(oo, OOS_FROM, calEnd);
+  say(`| ${k} | ${t.n} | ${t.p100 ?? '—'}% | ${t.stop ?? '—'}% | ${t.win ?? '—'}% | ${t.avg ?? '—'}% | ${t.med ?? '—'}% | ${p.cagr}% | ${p.mdd}% | ${res[k].p.cagr}% |`);
+}
+say(`| 加權指數（買進持有，不含股利） | — | — | — | — | — | — | ${bOOS.cagr}% | ${bOOS.mdd}% | ${bIS.cagr}% |`, '',
+  '註：樣本外最後一年內的訊號尚未走完 250 天，逐筆統計不含它們，組合模擬則以最後一天收盤價結算。');
+
+// 存檔
+writeFileSync(`${DIR}/research/phase4-events.json`, JSON.stringify(Object.fromEntries(Object.entries(events).map(([k, v]) => [k, v.map(({ path, ...e }) => e)]))));
+const out = md.join('\n');
+console.log(out);
+if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, out + '\n');
