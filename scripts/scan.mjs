@@ -156,12 +156,45 @@ const books = Object.fromEntries(['B5', 'C4'].map(k => {
     pending: bk.pending.map(p => ({ id: p.id, name: universe[p.id]?.name })),
   }];
 }));
+// 近 60 個交易日的訊號：訊號後到今天的表現（讓你邊看邊判斷）
+const recentFrom = cal[Math.max(0, cal.length - 60)];
+const recentSignals = [];
+for (const [date, list] of Object.entries(sigByDate)) {
+  if (date < recentFrom) continue;
+  for (const g of list) {
+    const s = load(g.id); const t = s.idx.get(date); const lastB = s.bars.at(-1), sb = s.bars[t];
+    let hi = sb.close, lo = Infinity;
+    for (let j = t + 1; j < s.bars.length; j++) { hi = Math.max(hi, s.bars[j].high); lo = Math.min(lo, s.bars[j].low); }
+    const stop = Math.max(g.baseLow, sb.close * 0.85);
+    recentSignals.push({
+      date, sig: g.sig, sigName: SIGNALS[g.sig].name, id: g.id, name: universe[g.id]?.name,
+      priceAtSignal: r2(sb.rawClose ?? sb.close), lastPrice: r2(lastB.rawClose ?? lastB.close),
+      ret: r1(lastB.close / sb.close - 1), maxGain: r1(hi / sb.close - 1),
+      status: lo <= stop ? '已跌破停損' : '持續中',
+    });
+  }
+}
+recentSignals.sort((a, b) => b.date.localeCompare(a.date) || b.ret - a.ret);
+
+// 觀察名單：整理 60 天以上、收盤距離整理區間高點 3% 以內、還沒突破
+const watch = [];
+for (const [id, u] of Object.entries(universe)) {
+  if (u.segs.at(-1)[1] !== lastDate) continue;
+  const s = load(id); if (!s?.f) continue;
+  const t = s.bars.length - 1, x = s.f[t];
+  if (x.bLen40 < 60 || x.brkBase40) continue;
+  let hi = -Infinity; for (let j = t - x.bLen40; j < t; j++) hi = Math.max(hi, s.bars[j].high);
+  const dist = s.bars[t].close / hi - 1;
+  if (dist >= -0.03) watch.push({ id, name: u.name, baseDays: x.bLen40, dist: r1(dist), close: r2(s.bars[t].rawClose ?? s.bars[t].close), baseHigh: r2(hi), moneyRatio: r2(x.moneyRatio), type: x.bLen40 >= 250 ? 'C4 候選' : x.bLen40 < 120 ? 'B5 候選' : '整理 120～249 天' });
+}
+watch.sort((a, b) => b.dist - a.dist);
+
 const done = trades.filter(t => t.ret != null);
 const summary = k => { const ts = done.filter(t => t.book === k); const w = ts.filter(t => t.ret > 0).length; return { n: ts.length, win: ts.length ? r1(w / ts.length) : null, avg: ts.length ? r2(ts.reduce((a, t) => a + t.ret, 0) / ts.length) : null }; };
 writeFileSync(`${OUT}/latest.json`, JSON.stringify({
   date: lastDate, env: env.get(lastDate) ?? '資料不足', universeCount: inU, startDate: state.startDate,
   signals: sigOut.filter(s => !SIGNALS[s.sig].alertOnly), alerts: sigOut.filter(s => SIGNALS[s.sig].alertOnly),
-  books, stats: { B5: summary('B5'), C4: summary('C4') },
+  recentSignals, watch, books, stats: { B5: summary('B5'), C4: summary('C4') },
   recentTrades: trades.filter(t => t.book === 'B5' || t.book === 'C4').reverse().slice(0, 30), history,
   generatedAt: new Date().toISOString(),
 }));
