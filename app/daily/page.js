@@ -57,6 +57,34 @@ export default function Daily() {
         </div>
       ))}
 
+      <h3 style={{ margin: '12px 0 6px' }}>近 60 個交易日的訊號（到今天的表現）</h3>
+      <div style={box}>
+        {(d.recentSignals || []).length === 0 && <div style={{ color: '#888', fontSize: 13 }}>近期沒有訊號</div>}
+        {(d.recentSignals || []).map((r, i) => (
+          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '5px 0', borderBottom: '1px solid #262a35' }}>
+            <span>
+              <span style={{ color: SIG_COLOR[r.sig], fontWeight: 700 }}>{r.sig}</span> {r.id} {r.name}
+              <br /><small style={{ color: '#888' }}>{r.date} 訊號價 {r.priceAtSignal} → 今 {r.lastPrice}｜最高 {pct(r.maxGain)}｜{r.status}</small>
+            </span>
+            <b style={{ color: col(r.ret) }}>{pct(r.ret)}</b>
+          </div>
+        ))}
+      </div>
+
+      <h3 style={{ margin: '12px 0 6px' }}>觀察名單（整理中、離突破 3% 以內）</h3>
+      <div style={box}>
+        {(d.watch || []).length === 0 && <div style={{ color: '#888', fontSize: 13 }}>目前沒有接近突破的股票</div>}
+        {(d.watch || []).map(w => (
+          <div key={w.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '5px 0', borderBottom: '1px solid #262a35' }}>
+            <span>{w.id} {w.name} <small style={{ color: '#9ecbff' }}>{w.type}</small>
+              <br /><small style={{ color: '#888' }}>整理 {w.baseDays} 天｜區間高點 {w.baseHigh}｜今日量能 {w.moneyRatio} 倍</small>
+            </span>
+            <b style={{ color: '#aaa' }}>{w.dist}%</b>
+          </div>
+        ))}
+        <div style={{ fontSize: 11, color: '#666', marginTop: 6 }}>收盤突破區間高點、且量能達標（B5 ≥ 2 倍、C4 ≥ 1.5 倍）時，才會成為正式訊號</div>
+      </div>
+
       {d.alerts.length > 0 && (
         <div style={{ ...box, border: '1px solid #f5a524' }}>
           <b style={{ color: '#f5a524' }}>⚠️ 崩盤反轉提醒（A4，不自動交易）</b>
@@ -99,4 +127,4 @@ export default function Daily() {
       <p style={{ fontSize: 11, color: '#666' }}>規則已凍結，與回測相同：隔天開盤進場、停損為整理區間低點（最多 -15%）、最長持有 250 個交易日、成本 0.6%。這是模擬紀錄，不是投資建議。更新時間 {d.generatedAt}</p>
     </main>
   );
-    }
+}
